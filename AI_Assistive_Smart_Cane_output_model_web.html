@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Safety Monitor · ESP32</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg1:#07162e; --bg2:#12305c;
+  --glass:rgba(255,255,255,.08); --glass-strong:rgba(255,255,255,.13);
+  --edge:rgba(255,255,255,.2); --text:#eef4ff; --muted:#a9bbdb;
+  --ok:#5eead4; --alert:#ff7a8a; --warn:#ffd27a;
+  --r-lg:28px; --r-md:20px; --r-sm:12px;
+}
+*{box-sizing:border-box;margin:0}
+html,body{min-height:100%}
+body{
+  font-family:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color:var(--text);
+  background:linear-gradient(160deg,var(--bg1),var(--bg2));
+  background-attachment:fixed;
+  padding:clamp(16px,3vw,40px);
+  line-height:1.5;
+  overflow-x:hidden;
+}
+/* colour fields that sit behind the glass */
+body::before,body::after{content:"";position:fixed;border-radius:50%;filter:blur(90px);z-index:-1;opacity:.55}
+body::before{width:46vmax;height:46vmax;left:-12vmax;top:-14vmax;background:#2b8cff}
+body::after{width:40vmax;height:40vmax;right:-10vmax;bottom:-12vmax;background:#8b5cf6}
+.glass{
+  background:var(--glass);
+  border:1px solid var(--edge);
+  border-radius:var(--r-lg);
+  backdrop-filter:blur(22px) saturate(150%);
+  -webkit-backdrop-filter:blur(22px) saturate(150%);
+  box-shadow:0 24px 60px rgba(2,10,30,.35), inset 0 1px 0 rgba(255,255,255,.25);
+}
+.wrap{max-width:1120px;margin:0 auto;display:grid;gap:20px}
+header{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between;padding:18px 26px;border-radius:var(--r-md)}
+h1{font-size:1.25rem;font-weight:700;letter-spacing:-.01em}
+header p{color:var(--muted);font-size:.85rem}
+.pill{display:inline-flex;align-items:center;gap:10px;padding:8px 16px;border-radius:999px;background:var(--glass-strong);border:1px solid var(--edge);font-size:.85rem;font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.pill.live .dot{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.pill.demo .dot{background:var(--warn);box-shadow:0 0 10px var(--warn)}
+.pill.off .dot{background:var(--alert)}
+
+.banner{padding:16px 26px;border-radius:var(--r-md);display:flex;align-items:center;gap:14px;font-weight:600;transition:background .3s,border-color .3s}
+.banner.clear{border-color:rgba(94,234,212,.4)}
+.banner.active{background:rgba(255,122,138,.2);border-color:rgba(255,122,138,.6)}
+.banner svg{flex:none}
+.banner.active svg{animation:ring .9s ease-in-out infinite}
+@keyframes ring{0%,100%{transform:rotate(-10deg)}50%{transform:rotate(10deg)}}
+
+.main{display:grid;grid-template-columns:minmax(300px,1.05fr) 1.5fr;gap:20px}
+.hero{padding:30px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center}
+.gauge{position:relative;width:min(100%,300px);aspect-ratio:1}
+.gauge svg{width:100%;height:100%;transform:rotate(-90deg)}
+.gauge .track{stroke:rgba(255,255,255,.12)}
+.gauge .fill{stroke:var(--ok);transition:stroke-dashoffset .45s ease,stroke .3s}
+.gauge.near .fill{stroke:var(--alert)}
+.gauge .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.big{font-size:3.6rem;font-weight:800;letter-spacing:-.04em;line-height:1}
+.big small{font-size:1.1rem;font-weight:600;color:var(--muted);margin-left:4px;letter-spacing:0}
+.sub{color:var(--muted);font-size:.9rem}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.card{padding:24px;display:flex;flex-direction:column;gap:12px;min-height:150px}
+.card .top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.card h2{font-size:.95rem;font-weight:600;color:var(--muted)}
+.icon{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--glass-strong);border:1px solid var(--edge)}
+.value{font-size:1.65rem;font-weight:700;letter-spacing:-.02em}
+.tag{display:inline-block;padding:4px 12px;border-radius:999px;font-size:.78rem;font-weight:700;background:rgba(94,234,212,.16);color:var(--ok);width:fit-content}
+.tag.bad{background:rgba(255,122,138,.2);color:var(--alert)}
+.bar{height:6px;border-radius:6px;background:rgba(255,255,255,.12);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--warn);border-radius:6px;transition:width .2s linear}
+
+.lower{display:grid;grid-template-columns:1.5fr 1fr;gap:20px}
+.panel{padding:24px}
+.panel h2{font-size:1rem;font-weight:700;margin-bottom:14px}
+#log{list-style:none;padding:0;display:grid;gap:8px;max-height:220px;overflow:auto}
+#log li{display:flex;justify-content:space-between;gap:12px;padding:10px 14px;border-radius:var(--r-sm);background:rgba(255,255,255,.06);font-size:.88rem}
+#log time{color:var(--muted);flex:none}
+.empty{color:var(--muted);font-size:.9rem}
+label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:6px}
+input[type=text]{width:100%;padding:12px 14px;border-radius:var(--r-sm);border:1px solid var(--edge);background:rgba(255,255,255,.08);color:var(--text);font:inherit}
+input::placeholder{color:#7f93b8}
+.row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+button{font:inherit;font-weight:600;padding:11px 18px;border-radius:var(--r-sm);border:1px solid var(--edge);background:var(--glass-strong);color:var(--text);cursor:pointer;transition:background .2s}
+button:hover{background:rgba(255,255,255,.22)}
+button.primary{background:linear-gradient(135deg,#3b8cff,#7c5cf0);border-color:transparent}
+:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+.note{margin-top:12px;color:var(--muted);font-size:.8rem}
+.toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:16px}
+.toolbar h2{margin:0!important}
+.seg{display:inline-flex;gap:2px;padding:4px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid var(--edge)}
+.seg button{border:0;background:transparent;padding:7px 14px;border-radius:999px;font-size:.82rem}
+.seg button[aria-pressed="true"]{background:rgba(255,255,255,.24)}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+.tools button,#sound{padding:8px 14px;font-size:.85rem}
+#sound[aria-pressed="true"]{background:rgba(94,234,212,.22);border-color:rgba(94,234,212,.5)}
+.chartbox{position:relative;height:300px}
+#chart{width:100%;height:100%;display:block;touch-action:pan-y;cursor:crosshair}
+.tip{position:absolute;top:8px;display:none;pointer-events:none;padding:10px 12px;border-radius:12px;background:rgba(8,20,45,.88);border:1px solid var(--edge);font-size:.8rem;line-height:1.5;white-space:nowrap}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+.stat{padding:12px 16px;border-radius:var(--r-sm);background:rgba(255,255,255,.06)}
+.stat b{display:block;font-size:1.35rem;letter-spacing:-.02em}
+.stat span{color:var(--muted);font-size:.8rem}
+.key{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+#log[data-f="object"] li:not([data-t="object"]),#log[data-f="water"] li:not([data-t="water"]),#log[data-f="motion"] li:not([data-t="motion"]){display:none}
+@media (max-width:860px){.main,.lower{grid-template-columns:1fr}}
+@media (max-width:480px){.stats{grid-template-columns:1fr 1fr}.chartbox{height:250px}}
+@media (max-width:480px){.grid{grid-template-columns:1fr}.big{font-size:3rem}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (prefers-reduced-transparency:reduce){.glass{backdrop-filter:none;background:#1a3563}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="glass">
+    <div>
+      <h1>Safety monitor</h1>
+      <p>Proximity, water and motion alerts from your ESP32</p>
+    </div>
+    <span id="conn" class="pill off"><span class="dot"></span><span id="connText">Not connected</span></span>
+  </header>
+
+  <div id="banner" class="banner glass clear" role="status" aria-live="polite">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+    <span id="bannerText">All clear. The buzzer is off.</span>
+  </div>
+
+  <div class="main">
+    <section class="hero glass" aria-label="Object distance">
+      <div id="gauge" class="gauge">
+        <svg viewBox="0 0 240 240" aria-hidden="true">
+          <circle class="track" cx="120" cy="120" r="102" fill="none" stroke-width="14"/>
+          <circle id="fill" class="fill" cx="120" cy="120" r="102" fill="none" stroke-width="14" stroke-linecap="round" stroke-dasharray="640.9" stroke-dashoffset="640.9"/>
+          <line x1="120" y1="8" x2="120" y2="32" stroke="#ffd27a" stroke-width="3" stroke-linecap="round" transform="rotate(270 120 120)"/>
+        </svg>
+        <div class="center">
+          <div class="big"><span id="dist">--</span><small>cm</small></div>
+          <div class="sub" id="distText">Waiting for data</div>
+        </div>
+      </div>
+      <p class="sub">Alert distance is 25 cm. The yellow mark on the ring shows where it starts.</p>
+    </section>
+
+    <div class="grid">
+      <article class="card glass">
+        <div class="top"><h2>Buzzer</h2><span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg></span></div>
+        <div class="value" id="buzzerVal">Off</div>
+        <span class="tag" id="buzzerTag">Quiet</span>
+      </article>
+
+      <article class="card glass">
+        <div class="top"><h2>Water sensor</h2><span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.7s7 7.3 7 12.3a7 7 0 0 1-14 0c0-5 7-12.3 7-12.3z"/></svg></span></div>
+        <div class="value" id="waterVal">Dry</div>
+        <span class="tag" id="waterTag">No water detected</span>
+      </article>
+
+      <article class="card glass">
+        <div class="top"><h2>Stability (MPU6050)</h2><span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span></div>
+        <div class="value" id="stabVal">Stable</div>
+        <span class="sub" id="stabSub">Rotation 0 °/s</span>
+      </article>
+
+      <article class="card glass">
+        <div class="top"><h2>Vibration motor</h2><span class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 8 2 4-2 4"/><path d="m22 8-2 4 2 4"/><rect x="7" y="5" width="10" height="14" rx="2"/></svg></span></div>
+        <div class="value" id="vibVal">Idle</div>
+        <div class="bar" aria-hidden="true"><i id="vibBar"></i></div>
+        <span class="sub" id="vibSub">Runs for 3 s when an object comes within 25 cm</span>
+      </article>
+    </div>
+  </div>
+
+  <section class="panel glass" aria-label="Live graph">
+    <div class="toolbar">
+      <h2>Live graph</h2>
+      <div class="seg" id="range" role="group" aria-label="Time range">
+        <button data-s="30" aria-pressed="false">30 s</button>
+        <button data-s="120" aria-pressed="true">2 min</button>
+        <button data-s="300" aria-pressed="false">5 min</button>
+      </div>
+      <div class="seg" id="series" role="group" aria-label="Lines to show">
+        <button data-k="d" aria-pressed="true"><span class="key" style="background:#6cb6ff"></span>Distance</button>
+        <button data-k="g" aria-pressed="true"><span class="key" style="background:#ffd27a"></span>Rotation</button>
+      </div>
+      <div class="tools">
+        <button id="pause">Pause</button>
+        <button id="csv">Export CSV</button>
+        <button id="clear">Clear</button>
+      </div>
+    </div>
+    <div class="chartbox"><canvas id="chart" role="img" aria-label="Distance and rotation over time"></canvas><div class="tip" id="tip"></div></div>
+    <div class="stats">
+      <div class="stat"><b id="stMin">--</b><span>Closest object (cm)</span></div>
+      <div class="stat"><b id="stAlerts">0</b><span>Alerts this session</span></div>
+      <div class="stat"><b id="stTime">0 s</b><span>Time with buzzer on</span></div>
+    </div>
+  </section>
+
+  <div class="lower">
+    <section class="panel glass">
+      <h2>Recent events</h2>
+      <div class="seg" id="filter" role="group" aria-label="Filter events" style="margin-bottom:12px;flex-wrap:wrap">
+        <button data-f="all" aria-pressed="true">All</button>
+        <button data-f="object" aria-pressed="false">Object</button>
+        <button data-f="water" aria-pressed="false">Water</button>
+        <button data-f="motion" aria-pressed="false">Motion</button>
+      </div>
+      <ul id="log"><li class="empty">Events appear here when an alert starts or ends.</li></ul>
+    </section>
+
+    <section class="panel glass">
+      <h2>Connection</h2>
+      <p class="sub" style="margin-bottom:12px">Turn on the ESP32, then pair it here. It appears as "ESP32 Safety Monitor".</p>
+      <div class="row" style="margin-top:0">
+        <button class="primary" id="connect">Connect with Bluetooth</button>
+        <button id="demo">Try demo mode</button>
+        <button id="sound" aria-pressed="false">Sound alert: off</button>
+      </div>
+      <p class="note" id="bleMsg" role="status" style="font-weight:600"></p>
+      <p class="note">Works in Chrome or Edge on Windows, macOS, Linux and Android. Browsers on iPhone and iPad don't support Web Bluetooth. Open this file from disk or over https.</p>
+    </section>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let mode = "off", timer = null, demoT = 0, prev = null;
+
+
+function setConn(kind, text){
+  mode = kind;
+  $("conn").className = "pill " + kind;
+  $("connText").textContent = text;
+  $("connect").textContent = kind === "live" ? "Disconnect" : "Connect with Bluetooth";
+}
+
+function addLog(text, type){
+  const ul = $("log");
+  if (ul.querySelector(".empty")) ul.innerHTML = "";
+  const li = document.createElement("li");
+  li.dataset.t = type || "link";
+  const t = new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  li.innerHTML = "<span></span><time>" + t + "</time>";
+  li.firstChild.textContent = text;
+  ul.prepend(li);
+  while (ul.children.length > 30) ul.lastChild.remove();
+}
+
+function render(s){
+  record(s);
+  const C = 640.9;
+  const hasDist = s.distance > 0;
+  const prox = hasDist ? Math.min(1, Math.max(0, 1 - s.distance / 100)) : 0;
+  $("fill").style.strokeDashoffset = C * (1 - prox);
+  $("gauge").classList.toggle("near", s.object);
+  $("dist").textContent = hasDist ? Math.round(s.distance) : "--";
+  $("distText").textContent = !hasDist ? "No object in range" : s.object ? "Object within alert distance" : "Object detected, clear of alert zone";
+
+  const reasons = [];
+  if (s.object) reasons.push("object within 25 cm");
+  if (s.water) reasons.push("water detected");
+  if (s.unstable) reasons.push("motion unstable");
+  $("banner").className = "banner glass " + (s.buzzer ? "active" : "clear");
+  $("bannerText").textContent = s.buzzer ? "Buzzer on: " + reasons.join(", ") + "." : "All clear. The buzzer is off.";
+
+  $("buzzerVal").textContent = s.buzzer ? "On" : "Off";
+  $("buzzerTag").textContent = s.buzzer ? "Sounding" : "Quiet";
+  $("buzzerTag").classList.toggle("bad", s.buzzer);
+
+  $("waterVal").textContent = s.water ? "Wet" : "Dry";
+  $("waterTag").textContent = s.water ? "Water detected" : "No water detected";
+  $("waterTag").classList.toggle("bad", s.water);
+
+  $("stabVal").textContent = s.unstable ? "Unstable" : "Stable";
+  $("stabSub").textContent = "Rotation " + Number(s.gyro).toFixed(0) + " °/s, force " + Number(s.accel).toFixed(2) + " g";
+
+  $("vibVal").textContent = s.vibrator ? "Running" : "Idle";
+  $("vibBar").style.width = s.vibrator ? Math.max(0, s.vibratorLeft / 30) + "%" : "0%";
+  $("vibSub").textContent = s.vibrator ? (s.vibratorLeft / 1000).toFixed(1) + " s left" : "Runs for 3 s when an object comes within 25 cm";
+
+  if (prev){
+    if (s.object !== prev.object) addLog(s.object ? "Object came within 25 cm" : "Object moved away", "object");
+    if (s.water !== prev.water) addLog(s.water ? "Water detected" : "Water sensor dry again", "water");
+    if (s.unstable !== prev.unstable) addLog(s.unstable ? "Motion became unstable" : "Motion stable again", "motion");
+  }
+  prev = s;
+}
+
+function demoStep(){
+  demoT += 0.5;
+  const d = 60 + 45 * Math.sin(demoT / 3.2);
+  const object = d <= 25;
+  const water = (demoT % 40) > 30 && (demoT % 40) < 34;
+  const unstable = (demoT % 55) > 46 && (demoT % 55) < 49;
+  let vib = prev ? prev.vibrator : false, left = prev ? prev.vibratorLeft : 0;
+  if (object && !(prev && prev.object)) { vib = true; left = 3000; }
+  else if (vib) { left -= 500; if (left <= 0) { vib = false; left = 0; } }
+  render({distance: Math.max(3, d), object, water, unstable, buzzer: object || water || unstable,
+          vibrator: vib, vibratorLeft: left, gyro: unstable ? 85 : 4 + Math.random() * 3, accel: unstable ? 1.5 : 1.0});
+}
+
+const SERVICE = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+const CHAR = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+let device = null;
+
+function stop(){ clearInterval(timer); timer = null; prev = null; }
+
+function parse(dv){
+  const f = dv.getUint8(0);
+  return {
+    object: !!(f & 1), water: !!(f & 2), unstable: !!(f & 4), buzzer: !!(f & 8), vibrator: !!(f & 16),
+    distance: dv.getInt16(1, true), vibratorLeft: dv.getUint16(3, true),
+    gyro: dv.getUint16(5, true) / 10, accel: dv.getUint16(7, true) / 100
+  };
+}
+
+async function link(){
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SERVICE);
+  const ch = await svc.getCharacteristic(CHAR);
+  ch.addEventListener("characteristicvaluechanged", e => render(parse(e.target.value)));
+  await ch.startNotifications();
+  setConn("live", "Live · " + (device.name || "ESP32"));
+}
+
+async function onDrop(){
+  addLog("Bluetooth connection lost");
+  for (let i = 1; i <= 4 && device; i++){
+    setConn("off", "Reconnecting (" + i + "/4)…");
+    try { await link(); addLog("Reconnected"); return; }
+    catch (e) { await new Promise(r => setTimeout(r, 2000)); }
+  }
+  if (device) setConn("off", "Disconnected");
+}
+
+function dropBle(){
+  if (!device) return;
+  device.removeEventListener("gattserverdisconnected", onDrop);
+  if (device.gatt.connected) device.gatt.disconnect();
+  device = null;
+}
+
+function msg(t, bad){ const m = $("bleMsg"); m.textContent = t; m.style.color = bad ? "var(--alert)" : "var(--ok)"; }
+const NO_BT = "Bluetooth isn't available in this browser or view. Download the file and open it in Chrome or Edge (not Safari, Firefox or a preview window).";
+async function connectBle(){
+  msg("Opening the device list…");
+  if (!navigator.bluetooth){ setConn("off", "Bluetooth not supported"); msg(NO_BT, true); return; }
+  try {
+    if (navigator.bluetooth.getAvailability && !(await navigator.bluetooth.getAvailability())){
+      setConn("off", "Turn on Bluetooth on this device"); msg("Bluetooth is turned off on this device. Turn it on and press the button again.", true); return;
+    }
+    stop(); dropBle();
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{services: [SERVICE]}, {namePrefix: "ESP32"}],
+      optionalServices: [SERVICE]
+    });
+    device.addEventListener("gattserverdisconnected", onDrop);
+    setConn("off", "Connecting…"); msg("Connecting to " + (device.name || "ESP32") + "…");
+    await link(); msg("Connected. Live data is on the way.");
+  } catch (e) {
+    device = null;
+    const why = {
+      NotFoundError: "No device chosen",
+      SecurityError: "Bluetooth is blocked here. Open the downloaded file directly in Chrome or Edge.",
+      NetworkError: "Found the ESP32 but could not connect. Reset it and try again."
+    };
+    setConn("off", why[e.name] || ("Could not connect: " + e.message));
+    msg(why[e.name] || ("Could not connect: " + e.message), e.name !== "NotFoundError");
+    addLog("Bluetooth error: " + e.name + " (" + e.message + ")");
+  }
+}
+
+$("connect").onclick = () => {
+  if (mode === "live"){ dropBle(); prev = null; setConn("off", "Not connected"); }
+  else connectBle();
+};
+$("demo").onclick = () => {
+  if (mode === "demo"){ stop(); setConn("off", "Not connected"); return; }
+  stop(); dropBle(); setConn("demo", "Demo mode"); demoT = 0;
+  timer = setInterval(demoStep, 500);
+};
+
+if (!navigator.bluetooth) msg(NO_BT, true);
+
+/* ---------- graph ---------- */
+const buf = [];
+let span = 120, show = {d: true, g: true}, paused = false, pauseT = 0, hoverX = null;
+let alerts = 0, alertMs = 0, minD = Infinity, lastRec = 0, lastBuzz = false;
+const cv = $("chart"), cx = cv.getContext("2d"), tip = $("tip");
+const C_D = "#6cb6ff", C_G = "#ffd27a", C_A = "#ff7a8a";
+
+function record(s){
+  const now = Date.now();
+  if (s.buzzer && !lastBuzz) alerts++;
+  if (s.buzzer && lastRec) alertMs += Math.min(now - lastRec, 1000);
+  lastBuzz = s.buzzer; lastRec = now;
+  if (s.distance > 0 && s.distance < minD) minD = s.distance;
+  if (!paused) buf.push({t: now, d: s.distance > 0 ? s.distance : null, g: Number(s.gyro), b: s.buzzer});
+  while (buf.length && now - buf[0].t > 600000) buf.shift();
+  stats();
+  beep(s.buzzer);
+}
+function stats(){
+  $("stMin").textContent = isFinite(minD) ? Math.round(minD) : "--";
+  $("stAlerts").textContent = alerts;
+  $("stTime").textContent = Math.round(alertMs / 1000) + " s";
+}
+
+function draw(){
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+  if (cv.width !== w || cv.height !== h){ cv.width = w; cv.height = h; }
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = r.width, H = r.height, L = 42, R = show.g ? 46 : 14, T = 10, B = 26, pw = W - L - R, ph = H - T - B;
+  cx.clearRect(0, 0, W, H);
+  const end = paused ? pauseT : Date.now(), start = end - span * 1000;
+  const X = t => L + (t - start) / (span * 1000) * pw;
+  const Yd = v => T + ph * (1 - Math.min(v, 100) / 100);
+  const Yg = v => T + ph * (1 - Math.min(v, 150) / 150);
+  cx.font = "12px Manrope, system-ui, sans-serif"; cx.lineWidth = 1;
+
+  for (let i = 0; i <= 4; i++){
+    const y = T + ph * i / 4;
+    cx.strokeStyle = "rgba(255,255,255,.1)"; cx.beginPath(); cx.moveTo(L, y); cx.lineTo(W - R, y); cx.stroke();
+    cx.textAlign = "right"; cx.fillStyle = C_D; cx.fillText(100 - 25 * i, L - 8, y + 4);
+    if (show.g){ cx.textAlign = "left"; cx.fillStyle = C_G; cx.fillText(Math.round(150 - 37.5 * i), W - R + 8, y + 4); }
+  }
+  cx.fillStyle = "#a9bbdb"; cx.textAlign = "left"; cx.fillText("-" + (span >= 60 ? span / 60 + " min" : span + " s"), L, H - 6);
+  cx.textAlign = "right"; cx.fillText(paused ? "paused" : "now", W - R, H - 6);
+
+  const pts = buf.filter(p => p.t >= start - 2000 && p.t <= end);
+  cx.fillStyle = "rgba(255,122,138,.16)";
+  for (let i = 0; i < pts.length; i++){
+    if (!pts[i].b) continue;
+    const x1 = Math.max(L, X(pts[i].t)), x2 = Math.min(W - R, X(i + 1 < pts.length ? pts[i + 1].t : end));
+    if (x2 > x1) cx.fillRect(x1, T, x2 - x1, ph);
+  }
+  if (show.d){
+    cx.strokeStyle = C_A; cx.setLineDash([6, 5]); cx.beginPath();
+    cx.moveTo(L, Yd(25)); cx.lineTo(W - R, Yd(25)); cx.stroke(); cx.setLineDash([]);
+    cx.fillStyle = C_A; cx.textAlign = "left"; cx.fillText("25 cm alert", L + 6, Yd(25) - 6);
+  }
+  const line = (key, Y, color) => {
+    cx.strokeStyle = color; cx.lineWidth = 2.2; cx.lineJoin = "round"; cx.beginPath();
+    let pen = false;
+    for (const p of pts){
+      if (p[key] == null){ pen = false; continue; }
+      const x = X(p.t), y = Y(p[key]);
+      if (pen) cx.lineTo(x, y); else { cx.moveTo(x, y); pen = true; }
+    }
+    cx.stroke(); cx.lineWidth = 1;
+  };
+  cx.save(); cx.beginPath(); cx.rect(L, T - 2, pw, ph + 4); cx.clip();
+  if (show.g) line("g", Yg, C_G);
+  if (show.d) line("d", Yd, C_D);
+  cx.restore();
+
+  if (pts.length === 0){
+    cx.fillStyle = "#a9bbdb"; cx.textAlign = "center";
+    cx.fillText("Connect the ESP32 or start demo mode to see live data", L + pw / 2, T + ph / 2);
+  }
+  if (hoverX !== null && pts.length && hoverX >= L && hoverX <= W - R){
+    const t = start + (hoverX - L) / pw * span * 1000;
+    let best = pts[0];
+    for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
+    const x = X(best.t);
+    cx.strokeStyle = "rgba(255,255,255,.5)"; cx.beginPath(); cx.moveTo(x, T); cx.lineTo(x, T + ph); cx.stroke();
+    if (show.d && best.d != null){ cx.fillStyle = C_D; cx.beginPath(); cx.arc(x, Yd(best.d), 4.5, 0, 7); cx.fill(); }
+    if (show.g){ cx.fillStyle = C_G; cx.beginPath(); cx.arc(x, Yg(best.g), 4.5, 0, 7); cx.fill(); }
+    const ago = Math.max(0, Math.round((end - best.t) / 1000));
+    tip.innerHTML = ago + " s ago<br>Distance: " + (best.d == null ? "no object" : Math.round(best.d) + " cm") +
+      "<br>Rotation: " + Math.round(best.g) + " °/s<br>Buzzer: " + (best.b ? "on" : "off");
+    tip.style.display = "block";
+    tip.style.left = Math.min(Math.max(x + 14, 0), W - tip.offsetWidth - 4) + "px";
+  } else tip.style.display = "none";
+}
+(function loop(){ draw(); requestAnimationFrame(loop); })();
+
+cv.addEventListener("pointermove", e => { hoverX = e.clientX - cv.getBoundingClientRect().left; });
+cv.addEventListener("pointerleave", () => { hoverX = null; });
+
+function choose(groupId, handler){
+  $(groupId).addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    handler(b);
+  });
+}
+function pressOne(group, btn){
+  group.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === btn));
+}
+choose("range", b => { span = +b.dataset.s; pressOne($("range"), b); });
+choose("series", b => {
+  const on = b.getAttribute("aria-pressed") !== "true";
+  if (!on && !(show.d && show.g)) return;           // keep at least one line visible
+  show[b.dataset.k] = on; b.setAttribute("aria-pressed", on);
+});
+choose("filter", b => { $("log").dataset.f = b.dataset.f; pressOne($("filter"), b); });
+
+$("pause").onclick = () => {
+  paused = !paused; if (paused) pauseT = Date.now();
+  $("pause").textContent = paused ? "Resume" : "Pause";
+};
+$("clear").onclick = () => {
+  buf.length = 0; alerts = 0; alertMs = 0; minD = Infinity; stats();
+  $("log").innerHTML = '<li class="empty">Events appear here when an alert starts or ends.</li>';
+};
+$("csv").onclick = () => {
+  if (!buf.length) return;
+  const rows = ["time,distance_cm,rotation_dps,buzzer"].concat(
+    buf.map(p => new Date(p.t).toISOString() + "," + (p.d == null ? "" : p.d.toFixed(0)) + "," + p.g.toFixed(1) + "," + (p.b ? 1 : 0)));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([rows.join("\n")], {type: "text/csv"}));
+  a.download = "esp32-readings.csv"; a.click(); URL.revokeObjectURL(a.href);
+};
+
+/* ---------- sound alert on this device ---------- */
+let soundOn = false, ac = null, lastBeep = 0;
+function beep(on){
+  if (!soundOn || !on || !ac) return;
+  const n = Date.now(); if (n - lastBeep < 900) return; lastBeep = n;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = "sine"; o.frequency.value = 880; g.gain.value = .08;
+  o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + .25);
+}
+$("sound").onclick = () => {
+  soundOn = !soundOn;
+  if (soundOn && !ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac && ac.state === "suspended") ac.resume();
+  $("sound").textContent = "Sound alert: " + (soundOn ? "on" : "off");
+  $("sound").setAttribute("aria-pressed", soundOn);
+};
+</script>
+</body>
+</html>
